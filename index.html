@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How a confidence interval is built</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f2f5f7; --panel:#ffffff; --ink:#1d2a38; --muted:#5b6b7b; --grid:#d9e1e7;
+  --pop:#7b8da0; --region:#cfe9e3; --regionline:#2b8c7e; --hit:#23806f; --miss:#c4442d;
+  --mu:#3a3f8f; --btn:#1d2a38; --btntext:#ffffff; --focus:#3a3f8f;
+  color-scheme: light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11171d; --panel:#18212a; --ink:#e4ebf1; --muted:#9aaab9; --grid:#2a3642;
+    --pop:#8fa3b6; --region:#1e4a43; --regionline:#4fc1ae; --hit:#4fc1ae; --miss:#f07a63;
+    --mu:#a3aaff; --btn:#e4ebf1; --btntext:#11171d; --focus:#a3aaff; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11171d; --panel:#18212a; --ink:#e4ebf1; --muted:#9aaab9; --grid:#2a3642;
+  --pop:#8fa3b6; --region:#1e4a43; --regionline:#4fc1ae; --hit:#4fc1ae; --miss:#f07a63;
+  --mu:#a3aaff; --btn:#e4ebf1; --btntext:#11171d; --focus:#a3aaff; color-scheme: dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:16px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 18px 40px}
+h1{font-size:1.75rem;line-height:1.2;margin:0 0 4px;font-weight:700}
+.lede{color:var(--muted);margin:0 0 16px;max-width:70ch}
+.controls{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:end;background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.ctl{display:flex;flex-direction:column;gap:4px;min-width:150px}
+.ctl label{font-size:.85rem;color:var(--muted)}
+.ctl output{font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:170px;accent-color:var(--mu)}
+input[type=number]{width:84px;padding:5px 7px;border:1px solid var(--grid);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.check{flex-direction:row;align-items:center;gap:8px;min-width:auto}
+.check input{width:18px;height:18px;accent-color:var(--mu)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+button{font:inherit;font-weight:700;border-radius:8px;padding:8px 14px;cursor:pointer;border:1.5px solid var(--btn);background:transparent;color:var(--ink)}
+button.primary{background:var(--btn);color:var(--btntext)}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:14px}
+@media (max-width:900px){.main{grid-template-columns:1fr}}
+.stage{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:6px}
+svg{display:block;width:100%;height:auto}
+.side{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:14px 16px}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.steps li{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:start;color:var(--muted);padding:5px 6px;border-radius:6px;transition:background .2s,color .2s}
+.steps li b{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;border:1.5px solid currentColor;font-size:.85rem}
+.steps li.on{color:var(--ink);background:var(--bg)}
+.steps li.on b{background:var(--mu);border-color:var(--mu);color:var(--btntext)}
+.calc{font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:.95rem}
+.calc dt{color:var(--muted)}
+.calc dd{margin:0;font-weight:700;text-align:right}
+.calc .note{grid-column:1/-1;font-size:.82rem;color:var(--muted);margin-top:-2px;text-align:left;font-weight:400}
+.verdict{margin-top:10px;font-weight:700;padding:8px 10px;border-radius:6px;background:var(--bg)}
+.verdict.hit{color:var(--hit)} .verdict.miss{color:var(--miss)}
+.count{font-size:1.05rem}
+.count strong{font-size:1.6rem;font-variant-numeric:tabular-nums}
+.bar{height:10px;border-radius:5px;background:var(--grid);margin:8px 0 4px;position:relative;overflow:hidden}
+.bar span{position:absolute;inset:0 auto 0 0;background:var(--hit);width:0}
+.bar i{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink)}
+.small{font-size:.82rem;color:var(--muted)}
+.svgtext{font-family:"Atkinson Hyperlegible",system-ui,sans-serif;paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How a confidence interval is built</h1>
+  <p class="lede">Each click takes a random sample, computes x̄, and stretches one margin of error each way. Watch where x̄ lands: inside the shaded confidence region, the interval reaches μ; outside it, the interval misses.</p>
+
+  <div class="controls" role="group" aria-label="Settings">
+    <div class="ctl"><label for="conf">Confidence level C</label><input id="conf" type="range" min="50" max="99" step="1" value="90"><output id="confOut">90%</output></div>
+    <div class="ctl"><label for="nIn">Sample size n</label><input id="nIn" type="range" min="2" max="60" step="1" value="10"><output id="nOut">10</output></div>
+    <div class="ctl"><label for="muIn">Population mean μ</label><input id="muIn" type="number" value="70" step="1"></div>
+    <div class="ctl"><label for="sdIn">Population SD σ</label><input id="sdIn" type="number" value="10" min="0.1" step="0.5"></div>
+    <div class="ctl check"><input id="useT" type="checkbox"><label for="useT">σ unknown: use s and t*</label></div>
+    <div class="btns">
+      <button id="one" class="primary">Draw one sample</button>
+      <button id="twenty">Draw 20</button>
+      <button id="hundred">Draw 100</button>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="stage"><svg id="plot" viewBox="0 0 760 640" role="img" aria-label="Population, sampling distribution of x-bar with confidence region, and stack of confidence intervals"></svg></div>
+    <div class="side">
+      <div class="card">
+        <ol class="steps" id="steps">
+          <li data-s="1"><b>1</b><span>Take a random sample of n values</span></li>
+          <li data-s="2"><b>2</b><span>Compute the sample mean x̄</span></li>
+          <li data-s="3"><b>3</b><span>Go one margin of error each way from x̄</span></li>
+          <li data-s="4"><b>4</b><span>Check: does the interval reach μ?</span></li>
+        </ol>
+      </div>
+      <div class="card" aria-live="polite">
+        <dl class="calc" id="calc">
+          <dt>Sample mean x̄</dt><dd id="cX">–</dd>
+          <dt id="cCritL">Critical value z*</dt><dd id="cCrit">–</dd>
+          <dd class="note" id="cCritN">comes only from C</dd>
+          <dt id="cSeL">Unit: σ/√n</dt><dd id="cSe">–</dd>
+          <dd class="note" id="cSeN">one standard deviation of x̄</dd>
+          <dt>Margin of error</dt><dd id="cMe">–</dd>
+          <dt>Interval</dt><dd id="cInt">–</dd>
+        </dl>
+        <div class="verdict" id="verdict">Draw a sample to begin.</div>
+      </div>
+      <div class="card">
+        <div class="count"><strong id="hits">0</strong> of <span id="tot">0</span> intervals captured μ</div>
+        <div class="bar"><span id="barFill"></span><i id="barTarget"></i></div>
+        <div class="small" id="rate">Capture rate so far: –. Target: 90%.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function invNorm(p){const a=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00],b=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,6.680131188771972e+01,-1.328068155288572e+01],c=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,-2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00],d=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];const pl=0.02425,ph=1-pl;let q,r;if(p<pl){q=Math.sqrt(-2*Math.log(p));return(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);}if(p>ph){q=Math.sqrt(-2*Math.log(1-p));return-(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);}q=p-0.5;r=q*q;return(((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);}
+function lgamma(z){const g=7,cf=[0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];if(z<0.5)return Math.log(Math.PI/Math.sin(Math.PI*z))-lgamma(1-z);z-=1;let x=cf[0];for(let i=1;i<g+2;i++)x+=cf[i]/(z+i);const t=z+g+0.5;return 0.5*Math.log(2*Math.PI)+(z+0.5)*Math.log(t)-t+Math.log(x);}
+function betacf(a,b,x){const MAXIT=300,EPS=3e-14,FPMIN=1e-300;const qab=a+b,qap=a+1,qam=a-1;let c=1,d=1-qab*x/qap;if(Math.abs(d)<FPMIN)d=FPMIN;d=1/d;let h=d;for(let m=1;m<=MAXIT;m++){const m2=2*m;let aa=m*(b-m)*x/((qam+m2)*(a+m2));d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;d=1/d;h*=d*c;aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;d=1/d;const del=d*c;h*=del;if(Math.abs(del-1)<EPS)break;}return h;}
+function ibeta(x,a,b){if(x<=0)return 0;if(x>=1)return 1;const bt=Math.exp(lgamma(a+b)-lgamma(a)-lgamma(b)+a*Math.log(x)+b*Math.log(1-x));return x<(a+1)/(a+b+2)?bt*betacf(a,b,x)/a:1-bt*betacf(b,a,1-x)/b;}
+function tcdf(t,df){const x=df/(df+t*t);const ib=ibeta(x,df/2,0.5);return t>=0?1-0.5*ib:0.5*ib;}
+function invT(p,df){let lo=-1e4,hi=1e4;for(let i=0;i<200;i++){const mid=(lo+hi)/2;if(tcdf(mid,df)<p)lo=mid;else hi=mid;}return(lo+hi)/2;}
+
+
+const $=id=>document.getElementById(id);
+const svg=$("plot"), NS="http://www.w3.org/2000/svg";
+const W=760, L=46, R=730;
+const A={top:30,base:150}, B={top:196,base:330}, C={top:372,bottom:612};
+const MAXROWS=50;
+const reduce=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let S={C:.90,n:10,mu:70,sd:10,useT:false}, results=[], busy=false;
+
+function randn(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+const xmin=()=>S.mu-3.5*S.sd, xmax=()=>S.mu+3.5*S.sd;
+const sx=x=>L+(x-xmin())/(xmax()-xmin())*(R-L);
+const clampX=x=>Math.max(L,Math.min(R,x));
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||svg).appendChild(e);return e;}
+function txt(x,y,s,a,p){const e=el("text",Object.assign({x,y,class:"svgtext","font-size":13,fill:"var(--muted)"},a||{}),p);e.textContent=s;return e;}
+const sleep=ms=>new Promise(r=>setTimeout(r,reduce?0:ms));
+function tween(ms,fn){return new Promise(res=>{if(reduce){fn(1);return res();}const t0=performance.now();(function f(t){const k=Math.min(1,(t-t0)/ms);fn(1-Math.pow(1-k,3));if(k<1)requestAnimationFrame(f);else res();})(t0);});}
+const crit=()=>S.useT?null:invNorm((1+S.C)/2);
+const fmt=v=>Math.abs(v)>=1000?v.toFixed(0):v.toFixed(2);
+const fmtN=v=>Math.abs(v-Math.round(v))<1e-9?String(Math.round(v)):(Math.abs(v)>=1000?v.toFixed(0):v.toFixed(2).replace(/0+$/,"").replace(/\.$/,""));
+
+let gStatic,gStack,gTemp;
+function curvePath(m,s,base,h,from,to){let d="";const N=160;for(let i=0;i<=N;i++){const x=from+(to-from)*i/N;const y=base-h*Math.exp(-.5*((x-m)/s)**2);d+=(i?"L":"M")+sx(x).toFixed(1)+" "+y.toFixed(1);}return d;}
+function drawStatic(){
+  svg.innerHTML="";
+  gStatic=el("g",{});
+  const se=S.sd/Math.sqrt(S.n);
+  // grid + axis ticks
+  for(let k=-3;k<=3;k++){const x=sx(S.mu+k*S.sd);el("line",{x1:x,x2:x,y1:A.top-6,y2:C.bottom,stroke:"var(--grid)","stroke-width":1},gStatic);txt(x,C.bottom+20,fmtN(S.mu+k*S.sd),{"text-anchor":"middle"},gStatic);}
+  // panel A: population
+  txt(L,A.top-12,"Population of individual values, mean μ and SD σ",{fill:"var(--ink)","font-weight":700},gStatic);
+  el("path",{d:curvePath(S.mu,S.sd,A.base,100,xmin(),xmax()),fill:"none",stroke:"var(--pop)","stroke-width":2},gStatic);
+  el("line",{x1:L,x2:R,y1:A.base,y2:A.base,stroke:"var(--muted)","stroke-width":1},gStatic);
+  // panel B: sampling distribution of xbar with confidence region (z-based)
+  txt(L,B.top-12,"Sampling distribution of x̄ (n = "+S.n+"): shaded = middle "+Math.round(S.C*100)+"%, the confidence region",{fill:"var(--ink)","font-weight":700},gStatic);
+  const zc=invNorm((1+S.C)/2), lo=S.mu-zc*se, hi=S.mu+zc*se;
+  const h=118;
+  let d=curvePath(S.mu,se,B.base,h,Math.max(lo,xmin()),Math.min(hi,xmax()));
+  d+="L"+sx(Math.min(hi,xmax())).toFixed(1)+" "+B.base+"L"+sx(Math.max(lo,xmin())).toFixed(1)+" "+B.base+"Z";
+  el("path",{d,fill:"var(--region)",opacity:S.useT?.55:1},gStatic);
+  el("path",{d:curvePath(S.mu,se,B.base,h,xmin(),xmax()),fill:"none",stroke:"var(--regionline)","stroke-width":2},gStatic);
+  el("line",{x1:L,x2:R,y1:B.base,y2:B.base,stroke:"var(--muted)","stroke-width":1},gStatic);
+  if(S.useT) txt(R,B.top+6,"with s, each interval has its own width",{"text-anchor":"end","font-size":12},gStatic);
+  // panel C label
+  txt(L,C.top-12,"Confidence intervals, newest on top (green reached μ, red missed)",{fill:"var(--ink)","font-weight":700},gStatic);
+  // mu line
+  const mx=sx(S.mu);
+  el("line",{x1:mx,x2:mx,y1:A.top-4,y2:C.bottom,stroke:"var(--mu)","stroke-width":2,"stroke-dasharray":"6 5"},gStatic);
+  txt(mx+6,A.top+8,"μ = "+fmtN(S.mu),{fill:"var(--mu)","font-weight":700},gStatic);
+  gStack=el("g",{}); gTemp=el("g",{});
+  drawStack();
+}
+function drawStack(){
+  gStack.innerHTML="";
+  const rows=results.slice(-MAXROWS).reverse();
+  const step=(C.bottom-C.top)/MAXROWS;
+  rows.forEach((r,i)=>{
+    const y=C.top+i*step+step/2, col=r.hit?"var(--hit)":"var(--miss)";
+    const x1=sx(r.lo), x2=sx(r.hi);
+    el("line",{x1:clampX(x1),x2:clampX(x2),y1:y,y2:y,stroke:col,"stroke-width":Math.max(1.6,step*.55),"stroke-linecap":"round"},gStack);
+    el("circle",{cx:clampX(sx(r.xbar)),cy:y,r:Math.max(1.6,step*.35),fill:"var(--panel)",stroke:col,"stroke-width":1.2},gStack);
+  });
+}
+function setStep(k){document.querySelectorAll("#steps li").forEach(li=>li.classList.toggle("on",+li.dataset.s===k));}
+function updateCount(){
+  const tot=results.length, hits=results.filter(r=>r.hit).length;
+  $("hits").textContent=hits; $("tot").textContent=tot;
+  const p=tot?hits/tot:0;
+  $("barFill").style.width=(p*100)+"%"; $("barTarget").style.left="calc("+(S.C*100)+"% - 1px)";
+  $("rate").textContent="Capture rate so far: "+(tot?(p*100).toFixed(1)+"%":"–")+". Target: "+Math.round(S.C*100)+"%.";
+}
+function showCalc(r){
+  $("cX").textContent=fmt(r.xbar);
+  if(S.useT){
+    $("cCritL").textContent="Critical value t* (df = "+(S.n-1)+")"; $("cCritN").textContent="comes from C and n − 1";
+    $("cSeL").textContent="Unit: s/√n"; $("cSe").textContent=fmt(r.s)+" / √"+S.n+" = "+fmt(r.se); $("cSeN").textContent="standard error, from this sample’s s";
+  } else {
+    $("cCritL").textContent="Critical value z*"; $("cCritN").textContent="comes only from C";
+    $("cSeL").textContent="Unit: σ/√n"; $("cSe").textContent=fmtN(S.sd)+" / √"+S.n+" = "+fmt(r.se); $("cSeN").textContent="one standard deviation of x̄";
+  }
+  $("cCrit").textContent=r.crit.toFixed(3);
+  $("cMe").textContent=r.crit.toFixed(3)+" × "+fmt(r.se)+" = "+fmt(r.me);
+  $("cInt").textContent="("+fmt(r.lo)+", "+fmt(r.hi)+")";
+  const v=$("verdict"); v.className="verdict "+(r.hit?"hit":"miss");
+  v.textContent=r.hit?"This interval reaches μ = "+fmtN(S.mu)+". It captured μ.":"This interval misses μ = "+fmtN(S.mu)+". x̄ landed outside the region.";
+}
+function makeSample(){
+  const xs=Array.from({length:S.n},()=>S.mu+S.sd*randn());
+  const xbar=xs.reduce((a,b)=>a+b,0)/S.n;
+  const s=Math.sqrt(xs.reduce((a,b)=>a+(b-xbar)**2,0)/(S.n-1));
+  const c=S.useT?invT((1+S.C)/2,S.n-1):invNorm((1+S.C)/2);
+  const se=S.useT?s/Math.sqrt(S.n):S.sd/Math.sqrt(S.n);
+  const me=c*se;
+  return {xs,xbar,s,crit:c,se,me,lo:xbar-me,hi:xbar+me,hit:(xbar-me<=S.mu&&S.mu<=xbar+me)};
+}
+function setBusy(b){busy=b;["one","twenty","hundred","reset","conf","nIn","muIn","sdIn","useT"].forEach(id=>$(id).disabled=b);}
+async function drawOne(){
+  if(busy)return; setBusy(true);
+  const r=makeSample(); gTemp.innerHTML="";
+  // step 1: sample dots
+  setStep(1);
+  const dots=r.xs.map(x=>el("circle",{cx:clampX(sx(x)),cy:A.base-6-Math.random()*16,r:4,fill:"var(--pop)",opacity:0},gTemp));
+  for(let i=0;i<dots.length;i++){dots[i].setAttribute("opacity",.85);await sleep(Math.min(45,700/dots.length));}
+  await sleep(250);
+  // step 2: xbar
+  setStep(2);
+  const xb=clampX(sx(r.xbar));
+  const tick=el("line",{x1:xb,x2:xb,y1:A.base-40,y2:A.base+6,stroke:"var(--ink)","stroke-width":2.5},gTemp);
+  const lab=txt(xb,A.base-46,"x̄",{"text-anchor":"middle",fill:"var(--ink)","font-weight":700,"font-size":15},gTemp);
+  await tween(350,k=>dots.forEach(d=>d.setAttribute("opacity",.85*(1-k)+.25*k)));
+  const ball=el("circle",{cx:xb,cy:A.base,r:6,fill:"var(--ink)"},gTemp);
+  await tween(600,k=>ball.setAttribute("cy",A.base+(B.base-A.base)*k));
+  ball.setAttribute("fill",r.hit?"var(--hit)":"var(--miss)");
+  await sleep(250);
+  // step 3: arms
+  setStep(3); showCalc(r);
+  const arm=el("line",{x1:xb,x2:xb,y1:B.base,y2:B.base,stroke:r.hit?"var(--hit)":"var(--miss)","stroke-width":5,"stroke-linecap":"round"},gTemp);
+  gTemp.appendChild(ball);
+  await tween(650,k=>{arm.setAttribute("x1",clampX(sx(r.xbar-r.me*k)));arm.setAttribute("x2",clampX(sx(r.xbar+r.me*k)));});
+  // step 4: check
+  setStep(4);
+  const ring=el("circle",{cx:sx(S.mu),cy:B.base,r:9,fill:"none",stroke:r.hit?"var(--hit)":"var(--miss)","stroke-width":2.5},gTemp);
+  await sleep(900);
+  results.push(r); drawStack(); updateCount();
+  await tween(300,k=>gTemp.setAttribute("opacity",1-k)); gTemp.innerHTML=""; gTemp.setAttribute("opacity",1);
+  setBusy(false);
+}
+async function drawMany(k){
+  if(busy)return; setBusy(true); setStep(0); gTemp.innerHTML="";
+  for(let i=0;i<k;i++){const r=makeSample();results.push(r);if(i===k-1)showCalc(r);drawStack();updateCount();await sleep(k>40?12:60);}
+  setBusy(false);
+}
+function resetAll(){
+  results=[]; setStep(0);
+  ["cX","cCrit","cSe","cMe","cInt"].forEach(id=>$(id).textContent="–");
+  const v=$("verdict"); v.className="verdict"; v.textContent="Draw a sample to begin.";
+  drawStatic(); updateCount();
+}
+function readSettings(){
+  S.C=+$("conf").value/100; S.n=+$("nIn").value; S.useT=$("useT").checked;
+  const mu=parseFloat($("muIn").value), sd=parseFloat($("sdIn").value);
+  if(Number.isFinite(mu)) S.mu=mu; if(Number.isFinite(sd)&&sd>0) S.sd=sd;
+  $("confOut").textContent=Math.round(S.C*100)+"%"; $("nOut").textContent=S.n;
+  resetAll();
+}
+["conf","nIn","useT"].forEach(id=>$(id).addEventListener("input",readSettings));
+["muIn","sdIn"].forEach(id=>$(id).addEventListener("change",readSettings));
+$("one").addEventListener("click",drawOne);
+$("twenty").addEventListener("click",()=>drawMany(20));
+$("hundred").addEventListener("click",()=>drawMany(100));
+$("reset").addEventListener("click",resetAll);
+readSettings();
+</script>
+</body>
+</html>
